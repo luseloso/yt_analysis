@@ -64,7 +64,8 @@ async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir=
   print(f"{'='*40}\n")
 
   video_id = get_video_id(video_url)
-  filename = f"video_{video_id}.md" if video_id else f"output_{index}.md"
+  template_suffix = f"_{template}" if template != "transcript" else ""
+  filename = f"video_{video_id}{template_suffix}.md" if video_id else f"output_{index}{template_suffix}.md"
   filepath = os.path.join(output_dir, filename)
 
   if output_dir:
