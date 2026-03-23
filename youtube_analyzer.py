@@ -57,7 +57,7 @@ def get_video_duration(url):
     print(f"Warning: Could not fetch video duration: {e}", file=sys.stderr)
     return None
 
-async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir="outputs", index=1, chunk_size=600):
+async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir="outputs", index=1, chunk_size=600, template="transcript"):
   """Analyzes a single YouTube video using the Gemini API."""
   print(f"\n{'='*40}")
   print(f"Analyzing Video: {video_url}")
@@ -97,8 +97,9 @@ async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir=
           else:
               msg1_video1 = types.Part.from_uri(file_uri=video_url, mime_type="video/*")
 
-          # Dynamic Prompt with Absolute timeline instructions
-          prompt = f"""You are transcribing a video segment to text.
+          # Dynamic Prompt Templates
+          prompt_templates = {
+              "transcript": f"""You are transcribing a video segment to text.
 The clip you are listening to starts at exactly {start if start is not None else 0} seconds in the full video.
 
 Please provide a detailed transcript for ONLY this segment.
@@ -108,7 +109,28 @@ Guidelines:
 2. Layout format: `[MM:SS] Speaker: Text`
 3. DO NOT include introductory filler (e.g., "Here is your transcript:"). Output ONLY raw transcript lines.
 4. Try to end on complete sentence bounds gracefully where possible.
+""",
+              "insights": f"""Provide a structured analysis table of Key Takeaways and Insights for this segment.
+The clip you are listening to starts at exactly {start if start is not None else 0} seconds in the full video.
+
+Guidelines:
+1. Extract a Markdown Table with columns: `Absolute Timecode`, `Key Takeaway`, and `Multimodal Evidence (Visual/Audio)`.
+2. Use ABSOLUTE timeline markers (e.g., [01:05]) continuous to the start offset index {start if start is not None else 0}.
+3. Note any distinct visual elements on screen (charts, text banners, speaker attire) if they enrich the point.
+4. DO NOT include introductory filler text. Output ONLY the table.
+""",
+              "chapters": f"""Analyze this video segment and formulate YouTube-style Chapter Markers.
+The clip you are listening to starts at exactly {start if start is not None else 0} seconds in the full video.
+
+Guidelines:
+1. Identify topic shifts or speaker changes.
+2. Outline absolute start bounds `[MM:SS]` for each sub-topic.
+3. Frame format: `[MM:SS] Chapter Name: Continuous description summary sentence.`
+4. DO NOT include introductory filler text. Output ONLY chapter list.
 """
+          }
+          
+          prompt = prompt_templates.get(template, prompt_templates["transcript"])
 
           contents = [
             types.Content(role="user", parts=[msg1_video1, types.Part.from_text(text=prompt)]),
@@ -160,6 +182,7 @@ async def main():
     parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini model to use (e.g. gemini-3.0-pro or gemini-2.5-flash)")
     parser.add_argument("--output_dir", default="outputs", help="Directory where markdown reports are saved. Provide empty string to disable.")
     parser.add_argument("--chunk_size", type=int, default=600, help="Chunk size in seconds for offsetting (default: 600s = 10m)")
+    parser.add_argument("--template", choices=['transcript', 'insights', 'chapters'], default='transcript', help="Prompt template to use (transcript, insights, chapters)")
     args = parser.parse_args()
 
     # 1. Load Environment file if provided
@@ -206,7 +229,7 @@ async def main():
 
     # 5. Process Each URL
     for i, url in enumerate(urls, start=1):
-        await analyze_video(client, url, model=args.model, output_dir=args.output_dir, index=i, chunk_size=args.chunk_size)
+        await analyze_video(client, url, model=args.model, output_dir=args.output_dir, index=i, chunk_size=args.chunk_size, template=args.template)
 
     return 0
 

@@ -99,6 +99,10 @@ python youtube_analyzer.py --urls_file data/list.json --env secrets/.env.prod --
 
 -   `--output_dir`: Sets the path where markdown reports are saved. Default is `outputs/`. Pass empty string `""` to disable and just print output directly to terminal.
 -   `--chunk_size`: (Seconds) The chunk interval to break the video down into. Default is `600` (10 minutes). For extremely highly continuous detailed transcripts without sentence truncation loops, you can lower it (e.g., `300` or `120`). Lower increments execute faster per chunk concurrently!
+-   `--template`: Choices: `['transcript', 'insights', 'chapters']`. Default is `'transcript'`.
+    -   `transcript`: Detailed line-by-line transcript with timeline sync.
+    -   `insights`: Extracts a high-level Markdown Table for each segment covering takeaways and concrete **Multimodal Evidence** seen on screen.
+    -   `chapters`: Formulates traditional YouTube video navigator styles with absolute descriptive bookmarks.
 
 ---
 
