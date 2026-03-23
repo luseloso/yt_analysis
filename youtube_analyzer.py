@@ -94,7 +94,11 @@ async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir=
           if start is not None and end is not None:
               print(f"--- Processing Chunk {i}/{len(chunks)}: {start}s to {end}s ---")
               msg1_video1 = types.Part.from_uri(file_uri=video_url, mime_type="video/*")
-              msg1_video1.video_metadata = types.VideoMetadata(start_offset=f"{start}s", end_offset=f"{end}s")
+              if end == duration:
+                  # Omit end_offset for the last chunk to avoid floating point duration edge exceptions
+                  msg1_video1.video_metadata = types.VideoMetadata(start_offset=f"{start}s")
+              else:
+                  msg1_video1.video_metadata = types.VideoMetadata(start_offset=f"{start}s", end_offset=f"{end}s")
           else:
               msg1_video1 = types.Part.from_uri(file_uri=video_url, mime_type="video/*")
 
@@ -116,9 +120,13 @@ The clip you are listening to starts at exactly {start if start is not None else
 
 Guidelines:
 1. Extract a Markdown Table with columns: `Absolute Timecode`, `Key Takeaway`, and `Multimodal Evidence (Visual/Audio)`.
-2. Use ABSOLUTE timeline markers (e.g., [01:05]) continuous to the start offset index {start if start is not None else 0}.
-3. Note any distinct visual elements on screen (charts, text banners, speaker attire) if they enrich the point.
-4. DO NOT include introductory filler text. Output ONLY the table.
+2. Use ABSOLUTE timeline markers (e.g., [01:02]) continuous to the start offset index {start if start is not None else 0}.
+3. DO NOT output introducing filler text. Output ONLY the markdown table.
+
+Example Row Syntax:
+| Absolute Timecode | Key Takeaway | Multimodal Evidence (Visual/Audio) |
+|---|---|---|
+| [01:05] | Speaker discusses Q4 projections | Line graph trend on screen shows $68.1B total |
 """,
               "chapters": f"""Analyze this video segment and formulate YouTube-style Chapter Markers.
 The clip you are listening to starts at exactly {start if start is not None else 0} seconds in the full video.
