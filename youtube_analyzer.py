@@ -3,7 +3,9 @@ import os
 import json
 import argparse
 import sys
+import subprocess
 import urllib.parse as urlparse
+import asyncio
 from google import genai
 from google.genai import types
 
@@ -41,9 +43,21 @@ def get_video_id(url):
             return parsed.path.split('/')[2]
   except Exception:
     pass
-  return None
+def get_video_duration(url):
+  """Fetches video duration in seconds using yt-dlp."""
+  try:
+    result = subprocess.run(
+        ["yt-dlp", "--print", "%(duration)s", url],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    return int(result.stdout.strip())
+  except Exception as e:
+    print(f"Warning: Could not fetch video duration: {e}", file=sys.stderr)
+    return None
 
-def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir="outputs", index=1):
+async def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir="outputs", index=1, chunk_size=600):
   """Analyzes a single YouTube video using the Gemini API."""
   print(f"\n{'='*40}")
   print(f"Analyzing Video: {video_url}")
@@ -57,28 +71,15 @@ def analyze_video(client, video_url, model="gemini-2.5-flash", output_dir="outpu
       os.makedirs(output_dir, exist_ok=True)
       print(f"Saving output to {filepath}...\n")
 
-  # Setup content
-  msg1_video1 = types.Part.from_uri(
-      file_uri=video_url,
-      mime_type="video/*",
-  )
-  
-  prompt = """Please provide a detailed transcript for the video with timestamp markers. 
-Then, extract a table of key insights and takeaways with time citations referencing the video."""
+  duration = get_video_duration(video_url)
+  if duration:
+      chunks = [(s, min(s + chunk_size, duration)) for s in range(0, duration, chunk_size)]
+      print(f"Auto Partitioning: {len(chunks)} intervals of {chunk_size} seconds each.\n")
+  else:
+      chunks = [(None, None)]
 
-  contents = [
-    types.Content(
-      role="user",
-      parts=[
-        msg1_video1,
-        types.Part.from_text(text=prompt)
-      ]
-    ),
-  ]
-
-  # Configuration similar to original script, but with modern Defaults
   generate_content_config = types.GenerateContentConfig(
-    temperature = 0.7,  # Default reasonable temp for extraction tasks
+    temperature = 0.7,
     safety_settings = [
        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
@@ -87,34 +88,78 @@ Then, extract a table of key insights and takeaways with time citations referenc
     ]
   )
 
-  try:
-      with open(filepath, 'w', encoding='utf-8') if output_dir else sys.stdout as f_out:
-          if output_dir:
-                f_out.write(f"# Analysis for {video_url}\n\n")
-                f_out.flush()
+  async def process_chunk(start, end, i):
+      try:
+          if start is not None and end is not None:
+              print(f"--- Processing Chunk {i}/{len(chunks)}: {start}s to {end}s ---")
+              msg1_video1 = types.Part.from_uri(file_uri=video_url, mime_type="video/*")
+              msg1_video1.video_metadata = types.VideoMetadata(start_offset=f"{start}s", end_offset=f"{end}s")
+          else:
+              msg1_video1 = types.Part.from_uri(file_uri=video_url, mime_type="video/*")
 
-          for chunk in client.models.generate_content_stream(
+          # Dynamic Prompt with Absolute timeline instructions
+          prompt = f"""You are transcribing a video segment to text.
+The clip you are listening to starts at exactly {start if start is not None else 0} seconds in the full video.
+
+Please provide a detailed transcript for ONLY this segment.
+Guidelines:
+1. Format each line with ABSOLUTE timecode markers in the full video timeline structure.
+   - Example: if a word is spoken 5 seconds into this clip, and start is 60s, output [01:05] (65 seconds).
+2. Layout format: `[MM:SS] Speaker: Text`
+3. DO NOT include introductory filler (e.g., "Here is your transcript:"). Output ONLY raw transcript lines.
+4. Try to end on complete sentence bounds gracefully where possible.
+"""
+
+          contents = [
+            types.Content(role="user", parts=[msg1_video1, types.Part.from_text(text=prompt)]),
+          ]
+
+          response = await client.aio.models.generate_content(
             model = model,
             contents = contents,
             config = generate_content_config,
-            ):
-            if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
-                continue
-            text = chunk.text
-            print(text, end="", flush=True)
-            if output_dir:
-                 f_out.write(text)
-                 f_out.flush()
-          print("\n")
-  except Exception as e:
-      print(f"\nError analyzing {video_url}: {e}", file=sys.stderr)
+          )
+          print(f"✅ Chunk {i} ({start}s-{end}s) completed.")
+          return i, start, end, response.text
+      except Exception as e:
+          print(f"❌ Chunk {i} FAILED: {e}", file=sys.stderr)
+          return i, start, end, f"\n> [!WARNING]\n> Chunk {i} ({start}s-{end}s) streaming failed to complete: {e}\n\n"
 
-def main():
+  try:
+      # Fire async tasks in Parallel
+      tasks = [process_chunk(s, e, i) for i, (s, e) in enumerate(chunks, start=1)]
+      results = await asyncio.gather(*tasks)
+
+      # Sort by chunk index to ensure continuous timeline output
+      sorted_results = sorted(results, key=lambda x: x[0])
+
+      if output_dir:
+           with open(filepath, 'w', encoding='utf-8') as f_out:
+                f_out.write(f"# Analysis for {video_url}\n\n")
+                for i, start, end, text in sorted_results:
+                     if start is not None:
+                         f_out.write(f"\n## Transcript Segment ({start} - {end} seconds)\n\n")
+                     f_out.write(text)
+                     f_out.write("\n")
+                f_out.flush()
+           print(f"Saved aggregated output to {filepath}\n")
+      else:
+           print(f"\n# Analysis for {video_url}\n")
+           for i, start, end, text in sorted_results:
+                if start is not None:
+                    print(f"\n## Transcript Segment ({start} - {end} seconds)\n")
+                print(text)
+           print("\n")
+  except Exception as e:
+      print(f"\nError aggregating results for {video_url}: {e}", file=sys.stderr)
+
+async def main():
     parser = argparse.ArgumentParser(description="Bulk Analyze YouTube Videos using Gemini API")
     parser.add_argument("--urls_file", default="youtube_urls.json", help="Path to JSON file with list of URLs")
     parser.add_argument("--env", default=".env", help="Path to .env file containing credentials")
     parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini model to use (e.g. gemini-3.0-pro or gemini-2.5-flash)")
     parser.add_argument("--output_dir", default="outputs", help="Directory where markdown reports are saved. Provide empty string to disable.")
+    parser.add_argument("--chunk_size", type=int, default=600, help="Chunk size in seconds for offsetting (default: 600s = 10m)")
     args = parser.parse_args()
 
     # 1. Load Environment file if provided
@@ -161,9 +206,9 @@ def main():
 
     # 5. Process Each URL
     for i, url in enumerate(urls, start=1):
-        analyze_video(client, url, model=args.model, output_dir=args.output_dir, index=i)
+        await analyze_video(client, url, model=args.model, output_dir=args.output_dir, index=i, chunk_size=args.chunk_size)
 
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())
