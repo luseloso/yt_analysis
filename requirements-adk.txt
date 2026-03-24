@@ -1,0 +1,6 @@
+--extra-index-url https://us-python.pkg.dev/vertex-ai/genx-adk/simple/
+google-adk
+google-genai
+fastapi
+uvicorn
+python-dotenv
