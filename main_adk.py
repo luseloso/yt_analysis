@@ -5,7 +5,7 @@ import asyncio
 import sys
 
 # Load environment logic
-load_dotenv(".env")
+load_dotenv(".env", override=True)
 
 # 2. Check for basic auth variable just as a warning if missing
 project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
@@ -21,9 +21,12 @@ model_env = os.environ.get("GOOGLE_ADK_MODEL", "gemini-2.5-flash")
 agent = get_router_agent(model_env)
 
 async def run_cli():
-    print(f"✅ Google ADK Hierarchy loaded using `{model_env}`.")
-    print("Welcome to the YouTube Analyzer Agent. Type your request (e.g., 'Extract insights from https://youtube.com/...').")
-    print("Type 'exit' or 'quit' to exit.")
+    print(f"🤖 Google ADK Agent Hierarchy loaded [Model: {model_env}].")
+    print("Commands/Examples:")
+    print("  • 'Extract financial intelligence from https://youtube.com/watch?v=...'")
+    print("  • 'Extract chapters from https://youtube.com/watch?v=...'")
+    print("  • 'Synthesize an executive briefing for our Investment Committee.'")
+    print("Type 'exit' or 'quit' to terminate.\n")
     
     try:
         from google.adk.runners import InMemoryRunner
